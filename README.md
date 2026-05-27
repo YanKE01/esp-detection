@@ -29,9 +29,7 @@ ESP-Detection provides a series of ultra-lightweight models along with APIs that
 ## Installation
 
 ```bash
-conda create -n espdet python=3.8
-conda activate espdet
-pip install -r requirements.txt
+uv sync
 ```
 - ESP-IDF is not required during model training, but is mandatory when running the quantized model on ESP chips. For setup instructions, please refer to [ESP-IDF Programming Guide](https://idf.espressif.com/), and make sure to use [ESP-IDF](https://github.com/espressif/esp-idf) ```release/v5.3``` or above.
 
@@ -48,7 +46,7 @@ In esp-detection, we provide an all-in-one script ```espdet_run.py``` that strea
 ✨ We have integrated ```rect=True``` training and deployment into ```espdet_run.py```. You can simply set ```rect=True``` and specify ```size=[h, w]``` to enable it. For more details, please refer to the [tutorial](./docs/tutorials/how_to_train_and_deploy_model_with_rect_is_True.md).
 
 ```bash
-python espdet_run.py \
+uv run python espdet_run.py \
   --class_name mycat \
   --pretrained_path None \
   --dataset "cfg/datasets/coco_cat.yaml" \
