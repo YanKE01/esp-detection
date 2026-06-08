@@ -2,12 +2,10 @@ import os
 import argparse
 from pathlib import Path
 import shutil
-import subprocess
 import re
 
 from train import Train
-from deploy.export import Export
-from deploy.quantize import quant_espdet
+from deploy.quantize_aligned import quantize_aligned
 
 
 def rename_project(root_dir: Path, replacements: dict):
@@ -36,7 +34,7 @@ def rename_project(root_dir: Path, replacements: dict):
                 print(f"Failed to process {file}: {e}")
 
 
-def run(class_name, pretrained_path, dataset, size, target, calib_data, espdl, img):
+def run(class_name, pretrained_path, dataset, size, target, calib_data, espdl, img, esp_dl_path="../esp-dl"):
     """
     The whole process of realizing a customized detection model, including train, export, quantize a model and deploy it on ESP32 AI chips.
     """
@@ -55,26 +53,26 @@ def run(class_name, pretrained_path, dataset, size, target, calib_data, espdl, i
         results = Train(pretrained_path, dataset, size)
     # get the save path of best.pt
     model_path = os.path.join(str(results.save_dir), "weights/best.pt")
-    print("\033[32mCovert .pt model to ONNX model \033[0m")
-    Export(model_path, size)  # generate best.onnx
-    ONNX = model_path.replace(".pt", ".onnx") # onnx path
-    print("\033[32mQuantize ONNX model to ESP-DL format \033[0m")
-    quant_espdet(
-        onnx_path=ONNX,
+    print("\033[32mQuantize model to ESP-DL format (scale-aligned, chip-faithful) \033[0m")
+    # quantize_aligned exports .pt -> ONNX internally, then does a single fixed-config,
+    # scale-aligned int8 quantization (force_alignment_overlap) so the .espdl matches
+    # the on-chip behaviour (avoids the RequantizeLinear sim<->chip mismatch).
+    quantize_aligned(
+        model_path=model_path,
+        size=size,
         target=target,
-        num_of_bits=8,
-        device='cpu',
-        batchsz=32,
-        imgsz=size,
-        calib_dir=calib_data,
-        espdl_model_path=espdl,
+        calib_data=calib_data,
+        espdl=espdl,
     )
     print("\033[32mGenerate CPP Project running on chips \033[0m")
-    # download esp-dl
-    esp_dl_url = "https://github.com/espressif/esp-dl.git"
-    esp_dl_path = "esp-dl"
-    # if not os.path.exists(esp_dl_path):
-    subprocess.run(["git", "clone", esp_dl_url, esp_dl_path])
+    # Export the project from templates into your EXISTING local esp-dl tree.
+    # We never download esp-dl; the generated example/model components use relative
+    # override_paths (../../esp-dl, ../../../models/<class>_detect) so they must live
+    # inside the esp-dl tree (examples/ + models/) to build.
+    assert os.path.isdir(esp_dl_path), (
+        f"esp-dl not found at '{esp_dl_path}'. Pass --esp_dl_path pointing to your "
+        f"local esp-dl checkout (e.g. --esp_dl_path /path/to/esp-dl)."
+    )
 
     examples_path = os.path.join(esp_dl_path, "examples")
     models_path = os.path.join(esp_dl_path, "models")
@@ -87,13 +85,16 @@ def run(class_name, pretrained_path, dataset, size, target, calib_data, espdl, i
     shutil.copytree("deploy/espdet_model_template", custom_model_path, dirs_exist_ok=True)
     shutil.copytree("deploy/espdet_example_template", custom_example_path, dirs_exist_ok=True)
 
+    # Only the file name is embedded (EMBED_FILES / the _binary_<name>_jpg symbol),
+    # so use the basename even if --img is given as a full path.
+    img_name = os.path.basename(img)
     replacements = {
         "custom": class_name,
         "CUSTOM": class_name.upper(),
         "imgH": str(h),
         "imgW": str(w),
-        "espdet.jpg": img,
-        "espdet_jpg": os.path.splitext(img)[0] + "_jpg",
+        "espdet.jpg": img_name,
+        "espdet_jpg": os.path.splitext(img_name)[0] + "_jpg",
     }
 
     rename_project(Path(custom_example_path), replacements)
@@ -124,6 +125,10 @@ if __name__ == '__main__':
     parser.add_argument("--calib_data", type=str, required=True, help="Input calibration dataset path")
     parser.add_argument("--espdl", type=str, required=True, help="Output ESP-DL model path")
     parser.add_argument("--img", type=str, required=True, help="Input test img path for running on ESP32-chips")
+    parser.add_argument("--esp_dl_path", type=str, default="../esp-dl",
+                        help="Path to your EXISTING local esp-dl checkout; the CPP project is "
+                             "exported into its examples/ and models/ (never downloaded).")
 
     args = parser.parse_args()
-    run(args.class_name,args.pretrained_path, args.dataset, args.size, args.target, args.calib_data, args.espdl, args.img)
+    run(args.class_name, args.pretrained_path, args.dataset, args.size, args.target,
+        args.calib_data, args.espdl, args.img, args.esp_dl_path)

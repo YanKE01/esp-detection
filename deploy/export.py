@@ -94,7 +94,9 @@ class ESP_Detect_Exporter(Exporter):
             meta.key, meta.value = k, str(v)
 
         onnx.save(model_onnx, f)
-        return f, model_onnx
+        # ultralytics >= 8.4 calls `f = self.export_onnx()` directly and expects the
+        # path string (it does `Path(f).resolve()`), so return only `f`, not a tuple.
+        return f
 
 
 class ESP_YOLO(YOLO):

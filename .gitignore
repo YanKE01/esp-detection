@@ -1,4 +1,6 @@
 **/*.onnx
+**/*.espdl
+**/*.cache
 **/__pycache__/
 .venv/
 runs/
@@ -6,3 +8,4 @@ runs/
 build/
 .idea/
 *.egg-info/
+outputs/

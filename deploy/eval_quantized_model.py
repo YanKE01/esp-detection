@@ -150,10 +150,12 @@ class QuantizedModelValidator(BaseValidator):
 
             self.args.half = model.fp16  # update half
 
-            stride, pt, jit = model.stride, model.pt, model.jit
+            # ultralytics >= 8.4 dropped AutoBackend.pt/.jit in favour of .format
+            stride, fmt = model.stride, model.format
+            pt = fmt == "pt"
 
             imgsz = check_imgsz(self.args.imgsz, stride=stride)
-            if not (pt or jit or getattr(model, "dynamic", False)):
+            if fmt not in {"pt", "torchscript"} and not getattr(model, "dynamic", False):
                 self.args.batch = model.metadata.get("batch", 1)  # export.py models default to batch-size 1
                 LOGGER.info(f"Setting batch={self.args.batch} input of shape ({self.args.batch}, 3, {imgsz}, {imgsz})")
 
@@ -170,7 +172,7 @@ class QuantizedModelValidator(BaseValidator):
 
             if self.device.type in {"cpu", "mps"}:
                 self.args.workers = 0  # faster CPU val as time dominated by inference, not dataloading
-            if not (pt or (getattr(model, "dynamic", False) and not model.imx)):
+            if not (pt or (getattr(model, "dynamic", False) and fmt != "imx")):
                 self.args.rect = False
             self.stride = model.stride  # used in get_dataloader() for padding
             self.dataloader = self.dataloader or self.get_dataloader(
@@ -203,7 +205,7 @@ class QuantizedModelValidator(BaseValidator):
                 batch = self.preprocess(batch)
             # Inference
             with dt[1]:
-                preds = ppq_graph_inference(executor, "detect", batch["img"], "cpu")
+                preds = ppq_graph_inference(executor, "detect", batch["img"], self.device, self.data["nc"])
             # Loss
             with dt[2]:
                 if self.training:
@@ -284,10 +286,9 @@ def ppq_graph_init(quant_func, imgsz, device, native_path=None):
     executor = TorchExecutor(graph=ppq_graph, device=device)
     return executor
 
-# remember to change the input of ppq_graph_inference function in QuantizedModelValidator
-def ppq_graph_inference(executor, task, inputs, device):
+def ppq_graph_inference(executor, task, inputs, device, nc=1):
     """ppq graph inference"""
-    NC = 1
+    NC = nc
     graph_outputs = executor(inputs)
     if task == "detect":
         boxes_ls = [(graph_outputs[i]) for i in range(0, 6, 2)] # replace feats for self.anchor
